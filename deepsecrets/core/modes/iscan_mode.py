@@ -6,7 +6,6 @@ from datetime import datetime
 from functools import partial
 from multiprocessing.pool import Pool
 from typing import Any, Callable, List, Optional, Type
-import regex as re
 
 from dotwiz import DotWiz
 
@@ -126,12 +125,7 @@ class ScanMode:
 
         final: List[Finding] = []       
         for result in results:
-            good_result = True
-            for false_pattern in false_finding_rules:
-                if re.match(false_pattern.pattern, result.detection) is not None:
-                    good_result = False
-                    break
-            if not good_result:
+            if any(false_pattern.matches_finding(result) for false_pattern in false_finding_rules):
                 continue
 
             final.append(result)

@@ -91,7 +91,7 @@ class Finding(BaseModel):
             return False
 
         self.rules.extend(other.rules)
-        self.rules = list(set(self.rules))
+        self.rules = list(dict.fromkeys(self.rules))
 
         return True
 
