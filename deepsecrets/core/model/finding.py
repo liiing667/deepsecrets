@@ -7,6 +7,7 @@ from pydantic import BaseModel, Field, PrivateAttr
 
 from deepsecrets.core.model.file import File
 from deepsecrets.core.model.rules.rule import Rule
+from deepsecrets.core.utils.exceptions import FindingSerializationException
 
 
 class Finding(BaseModel):
@@ -117,16 +118,25 @@ class FindingMerger:
 
 class FindingResponse:
     @classmethod
-    def from_list(cls, list: List[Finding]) -> Dict[str, List[Dict]]:
+    def from_list(cls, findings: List[Finding]) -> Dict[str, List[Dict]]:
         resp: Dict[str, List[Dict]] = {}
-        for finding in list:
+        for finding in findings:
             if finding.file is None:
-                continue
+                raise FindingSerializationException(
+                    'Unable to serialize a finding with no file attached'
+                )
+
+            try:
+                serialized = FindingApiModel.from_finding(finding).dict()
+            except Exception as e:
+                raise FindingSerializationException(
+                    f'Unable to serialize a finding in {finding.file.path}: {e}'
+                ) from e
 
             if finding.file.path not in resp:
                 resp[finding.file.path] = []
 
-            resp[finding.file.path].append(FindingApiModel.from_finding(finding).dict())
+            resp[finding.file.path].append(serialized)
         return resp
 
 

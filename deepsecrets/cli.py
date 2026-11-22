@@ -1,5 +1,4 @@
 import argparse
-import json
 import logging
 import sys
 from argparse import RawTextHelpFormatter
@@ -9,7 +8,8 @@ from deepsecrets import MODULE_NAME, logger, set_logging_level
 from deepsecrets.config import Config, Output
 from deepsecrets.core.engines.regex import RegexEngine
 from deepsecrets.core.engines.semantic import SemanticEngine
-from deepsecrets.core.model.finding import Finding, FindingResponse
+from deepsecrets.core.model.finding import Finding
+from deepsecrets.core.report import ScanResult, write_report
 from deepsecrets.core.rulesets.false_findings import FalseFindingsBuilder
 from deepsecrets.core.rulesets.hashed_secrets import HashedSecretsRulesetBuilder
 from deepsecrets.core.rulesets.regex import RegexRulesetBuilder
@@ -188,10 +188,14 @@ class DeepSecretsCliTool:
         report_path = get_abspath(self.config.output.path)
 
         logger.info(f'Writing report to {report_path}')
-        with open(report_path, 'w+') as f:
-            json.dump(FindingResponse.from_list(findings), f)
+        try:
+            result = ScanResult(findings)
+            write_report(report_path, result.response)
+        except Exception as e:
+            logger.error(f'Unable to write the report to {report_path}: {e}')
+            sys.exit(1)
 
         logger.info('Done')
 
-        if len(findings) > 0 and self.config.return_code_if_findings:
+        if len(result) > 0 and self.config.return_code_if_findings:
             sys.exit(FINDINGS_DETECTED_RETURN_CODE)
