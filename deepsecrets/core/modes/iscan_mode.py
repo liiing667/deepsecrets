@@ -37,6 +37,9 @@ class ScanMode:
             self.pool_engine = pool_engine
 
         self.config = config
+        # Exclusion rules belong to this scan generation.  Do not let an
+        # earlier scan (or an earlier Config) leak into the file list.
+        self.path_exclusion_rules = []
         self.filepaths = self._get_files_list()
         self.prepare_for_scan()
 

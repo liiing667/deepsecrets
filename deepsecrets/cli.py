@@ -7,6 +7,7 @@ from typing import List
 
 from deepsecrets import MODULE_NAME, logger, set_logging_level
 from deepsecrets.config import Config, Output
+from deepsecrets.core.engines.hashed_secret import HashedSecretEngine
 from deepsecrets.core.engines.regex import RegexEngine
 from deepsecrets.core.engines.semantic import SemanticEngine
 from deepsecrets.core.model.finding import Finding, FindingResponse
@@ -18,6 +19,13 @@ from deepsecrets.scan_modes.cli import CliScanMode
 
 DISABLED = 'disabled'
 FINDINGS_DETECTED_RETURN_CODE = 66
+
+
+def _option_disabled(values: List[str]) -> bool:
+    """Return True for the documented ``disable`` spelling and empty lists."""
+    if isinstance(values, str):
+        return values in (DISABLED, 'disable')
+    return len(values) == 0 or (len(values) == 1 and values[0] in (DISABLED, 'disable'))
 
 
 class DeepSecretsCliTool:
@@ -144,29 +152,31 @@ class DeepSecretsCliTool:
             self.config.return_code_if_findings = True
 
         EXCLUDE_PATHS_BUILTIN = get_path_inside_package('rules/excluded_paths.json')
-        if user_args.excluded_paths is not None:
+        if user_args.excluded_paths is not None and not _option_disabled(user_args.excluded_paths):
             rules = [rule.replace('built-in', EXCLUDE_PATHS_BUILTIN) for rule in user_args.excluded_paths]
             self.config.set_global_exclusion_paths(rules)
 
         self.config.engines = []
 
         REGEX_BUILTIN_RULESET = get_path_inside_package('rules/regexes.json')
-        if user_args.regex_rules is not None:
+        if user_args.regex_rules is not None and not _option_disabled(user_args.regex_rules):
             rules = [rule.replace('built-in', REGEX_BUILTIN_RULESET) for rule in user_args.regex_rules]
             self.config.engines.append(RegexEngine)
             self.config.add_ruleset(RegexRulesetBuilder, rules)
 
         conf_semantic_analysis = user_args.semantic_analysis
-        if conf_semantic_analysis is not None and conf_semantic_analysis != DISABLED:
+        if conf_semantic_analysis is not None and not _option_disabled(conf_semantic_analysis):
             self.config.engines.append(SemanticEngine)
 
         conf_hashed_ruleset = user_args.hashed_values
-        if conf_hashed_ruleset is not None and conf_hashed_ruleset != DISABLED:
-            self.config.engines.append(RegexEngine)
+        if conf_hashed_ruleset is not None and not _option_disabled(conf_hashed_ruleset):
+            self.config.engines.append(HashedSecretEngine)
             self.config.add_ruleset(HashedSecretsRulesetBuilder, conf_hashed_ruleset)
 
         conf_false_findings_ruleset = user_args.false_findings
-        if conf_false_findings_ruleset is not None:
+        if conf_false_findings_ruleset is not None and not _option_disabled(
+            conf_false_findings_ruleset
+        ):
             self.config.add_ruleset(FalseFindingsBuilder, conf_false_findings_ruleset)
 
     def start(self) -> None:  # pragma: nocover

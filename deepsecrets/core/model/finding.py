@@ -3,10 +3,12 @@ from __future__ import annotations
 from hashlib import sha256
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field, PrivateAttr
+from pydantic import BaseModel, Field, PrivateAttr, root_validator
 
 from deepsecrets.core.model.file import File
+from deepsecrets.core.model.rules.hashing import HashingAlgorithm
 from deepsecrets.core.model.rules.rule import Rule
+from deepsecrets.core.utils.hashing import ruleset_generation
 
 
 class Finding(BaseModel):
@@ -17,9 +19,30 @@ class Finding(BaseModel):
     linum: Optional[int] = Field(default=None)
     start_pos: int
     end_pos: int
+    # Provenance for hashed-secret findings.  These fields are intentionally
+    # not part of FindingApiModel: legacy report consumers keep exactly the
+    # same API shape while internal consumers can attribute a finding to the
+    # rule algorithm, token digest and migration generation.
+    algorithm: Optional[HashingAlgorithm] = Field(default=None)
+    hashed_value: Optional[str] = Field(default=None)
+    hashed_values: Dict[HashingAlgorithm, str] = Field(default_factory=dict)
+    rule_generation: Optional[str] = Field(default=None)
     reason: str = Field(default='')
     final_rule: Optional[Rule] = Field(default=None)
     _mapped_on_file: bool = PrivateAttr(default=False)
+
+    @root_validator(pre=True)
+    def normalize_provenance_aliases(cls, values: Dict) -> Dict:
+        for alias in ('generation', 'scan_generation', 'migration_generation'):
+            if alias in values and 'rule_generation' not in values:
+                values['rule_generation'] = values.pop(alias)
+
+        if 'token_hash' in values and 'hashed_value' not in values:
+            values['hashed_value'] = values.pop('token_hash')
+        if 'token_hashes' in values and 'hashed_values' not in values:
+            values['hashed_values'] = values.pop('token_hashes')
+
+        return values
 
     def map_on_file(self, relative_start: int, file: Optional['File'] = None) -> None:
         if self._mapped_on_file:
@@ -43,8 +66,62 @@ class Finding(BaseModel):
 
         return f'{self.final_rule.name} | {self.get_fingerprint()}'  # type: ignore
 
-    def get_fingerprint(self) -> str:
+    def get_fingerprint(self, algorithm: Optional[HashingAlgorithm] = None) -> str:
+        # The fingerprint is deliberately based on the detected secret only.
+        # It must not change when the same secret rotates from SHA-1 to
+        # SHA-256 (or when both rule generations coexist), otherwise existing
+        # suppression/baseline entries would disappear.
         return sha256(self.detection.encode('utf-8')).hexdigest()[23:33]
+
+    @property
+    def fingerprint(self) -> str:
+        return self.get_fingerprint()
+
+    @property
+    def token_hash(self) -> Optional[str]:
+        return self.hashed_value
+
+    @property
+    def token_hashes(self) -> Dict[HashingAlgorithm, str]:
+        return self.hashed_values
+
+    @property
+    def algorithms(self) -> List[HashingAlgorithm]:
+        algorithms: List[HashingAlgorithm] = []
+        for rule in self.rules:
+            algorithm = getattr(rule, 'algorithm', None)
+            if algorithm is not None and algorithm not in algorithms:
+                algorithms.append(algorithm)
+        return algorithms
+
+    @property
+    def rule_algorithms(self) -> List[HashingAlgorithm]:
+        return self.algorithms
+
+    @property
+    def rule_hashes(self) -> Dict[str, str]:
+        """Map each matching hashed rule id to the digest recorded for it."""
+        hashes: Dict[str, str] = {}
+        for rule in self.rules:
+            hashed_val = getattr(rule, 'hashed_val', None)
+            if hashed_val is None:
+                continue
+            hashes[rule.id] = hashed_val
+        return hashes
+
+    @property
+    def generation(self) -> Optional[str]:
+        if self.rule_generation is not None:
+            return self.rule_generation
+        if len(self.rules) == 0:
+            return None
+        if not any(getattr(rule, 'algorithm', None) is not None for rule in self.rules):
+            return None
+        return ruleset_generation(self.rules)
+
+    @property
+    def migration_generation(self) -> Optional[str]:
+        return self.generation
 
     class Config:
         arbitrary_types_allowed = True
@@ -55,14 +132,29 @@ class Finding(BaseModel):
             reverse=True
         )[0]
 
-    def __hash__(self) -> int:  # pragma: nocover
-        if not self.file:
-            raise Exception()
+        algorithm = getattr(self.final_rule, 'algorithm', None)
+        if algorithm is not None:
+            self.algorithm = algorithm
+            self.hashed_value = self.hashed_values.get(algorithm, self.hashed_value)
 
-        return hash(f'{self.file.path}{self.detection}{self.start_pos}{self.end_pos}')
+    def __hash__(self) -> int:  # pragma: nocover
+        file_path = self.file.path if self.file is not None else ''
+        return hash(f'{file_path}{self.detection}{self.start_pos}{self.end_pos}')
 
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, Finding):
+            return False
+
+        # Findings from different rule generations describe different scan
+        # states.  They may carry the same secret (and therefore the same
+        # fingerprint), but merging them would silently combine two complete
+        # generations.  A missing generation (e.g. a regex-only finding) stays
+        # compatible with any generation.
+        if (
+            other.rule_generation is not None
+            and self.rule_generation is not None
+            and other.rule_generation != self.rule_generation
+        ):
             return False
 
         if other.file and self.file:
@@ -90,8 +182,26 @@ class Finding(BaseModel):
         if other != self:
             return False
 
-        self.rules.extend(other.rules)
-        self.rules = list(set(self.rules))
+        if other is self:
+            return True
+
+        # Deduplicate while preserving the original order.  During a hashed
+        # secret migration the same detection is legitimately produced by an
+        # old SHA-1 rule and a new SHA-256 rule; the oldest rule must stay
+        # first so the existing finding identity/fingerprint remains stable.
+        for rule in other.rules:
+            if rule not in self.rules:
+                self.rules.append(rule)
+
+        if self.algorithm is None:
+            self.algorithm = other.algorithm
+        if self.hashed_value is None:
+            self.hashed_value = other.hashed_value
+        for algorithm, digest in other.hashed_values.items():
+            if algorithm not in self.hashed_values:
+                self.hashed_values[algorithm] = digest
+        if self.rule_generation is None:
+            self.rule_generation = other.rule_generation
 
         return True
 
@@ -103,16 +213,22 @@ class FindingMerger:
         self.all = full_list
 
     def merge(self) -> List[Finding]:
-        interm_dict: Dict[int, Finding] = {}
+        merged: List[Finding] = []
+        buckets: Dict[int, List[Finding]] = {}
 
         for elem in self.all:
-            hash = elem.__hash__()
-            if hash not in interm_dict:
-                interm_dict[hash] = elem
+            bucket = buckets.setdefault(elem.__hash__(), [])
+            target = None
+            for candidate in bucket:
+                if candidate == elem:
+                    target = candidate
+                    break
 
-            interm_dict[hash].merge(elem)
+            if target is None or not target.merge(elem):
+                bucket.append(elem)
+                merged.append(elem)
 
-        return list(interm_dict.values())
+        return merged
 
 
 class FindingResponse:
