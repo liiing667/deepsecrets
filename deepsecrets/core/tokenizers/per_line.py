@@ -10,11 +10,19 @@ separator = re.compile(r'\n')
 
 class PerLineTokenizer(Tokenizer):
     def tokenize(self, file: File) -> List[Token]:
+        generation = self.begin_file(file)
         separs = separator.finditer(file.content)
         prev_end = 0
         for sep in separs:
             s, e = sep.span()
-            self.tokens.append(Token(file=file, content=file.content[prev_end:s], span=[prev_end, s]))
+            self.tokens.append(
+                Token(
+                    file=file,
+                    content=file.content[prev_end:s],
+                    span=[prev_end, s],
+                    generation=generation,
+                )
+            )
             prev_end = e
 
         return self.tokens

@@ -16,11 +16,19 @@ class Semantic:
     type: SemanticType
     name: str
     creds_probability: int
+    generation: Optional[int]
 
-    def __init__(self, type: SemanticType, name: str, creds_probability: int = 0) -> None:
+    def __init__(
+        self,
+        type: SemanticType,
+        name: str,
+        creds_probability: int = 0,
+        generation: Optional[int] = None,
+    ) -> None:
         self.type = type
         self.name = name
         self.creds_probability = creds_probability
+        self.generation = generation
 
 
 class Token:
@@ -34,12 +42,20 @@ class Token:
     semantic: Optional[Semantic]
     previous: Optional['Token']
     next: Optional['Token']
+    generation: Optional[int]
 
-    def __init__(self, file: File, content: Optional[str] = None, span: Optional[List[int]] = None) -> None:
+    def __init__(
+        self,
+        file: File,
+        content: Optional[str] = None,
+        span: Optional[List[int]] = None,
+        generation: Optional[int] = None,
+    ) -> None:
         self.file = file
         self.content = content
         self.span = span
         self.length = len(content) if self.content else 0
+        self.generation = generation if generation is not None else getattr(file, 'generation', None)
         self.hashed_value = None
         self.previous = None
         self.next = None

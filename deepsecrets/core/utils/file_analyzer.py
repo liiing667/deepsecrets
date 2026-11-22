@@ -24,6 +24,7 @@ class FileAnalyzer:
     file: File
     engine_tokenizers: List[EngineWithTokenizer]
     tokens: Dict[Type, List[Token]]
+    token_generations: Dict[Type, int]
     pool_class: Type
 
     def __init__(self, file: File, pool_class: Optional[Type] = None):
@@ -35,6 +36,7 @@ class FileAnalyzer:
         self.engine_tokenizers = []
         self.file = file
         self.tokens = {}
+        self.token_generations = {}
         self.tokenizers_lock = RLock()
 
     def add_engine(self, engine: IEngine, tokenizers: List[Tokenizer]) -> None:
@@ -43,6 +45,7 @@ class FileAnalyzer:
 
     def process(self, threaded: bool = False) -> List[Finding]:
         results: List[Finding] = []
+        self.file.ensure_generation()
 
         if threaded:  # pragma: nocover
             with self.pool_class(2) as pool:
@@ -66,30 +69,57 @@ class FileAnalyzer:
 
     def _run_engine(self, et: EngineWithTokenizer) -> List[Finding]:
         results: List[Finding] = []
-        processed_values: Dict[int, bool] = {}
+        processed_values: Dict[object, bool] = {}
 
         with self.tokenizers_lock:
-            if et.tokenizer not in self.tokens:
+            current_generation = self.file.ensure_generation()
+            cached_generation = self.token_generations.get(et.tokenizer)
+            if et.tokenizer not in self.tokens or cached_generation != current_generation:
                 self.tokens[et.tokenizer] = et.tokenizer.tokenize(self.file)
+                self.token_generations[et.tokenizer] = current_generation
 
         tokens: List[Token] = self.tokens[et.tokenizer]
+        current_generation = self.file.generation
+        tokens = [
+            token
+            for token in tokens
+            if getattr(token, 'generation', None) in (None, current_generation)
+        ]
 
         for token in tokens:
-            is_known_content = processed_values.get(token.val_hash())
+            processed_key = self._processing_key(token)
+            is_known_content = processed_values.get(processed_key)
             if is_known_content is not None and is_known_content is False:
                 continue
 
-            processed_values[token.val_hash()] = False
+            processed_values[processed_key] = False
 
             try:
                 findings: List[Finding] = et.engine.search(token)
                 for finding in findings:
-                    finding.map_on_file(file=self.file, relative_start=token.span[0])
+                    finding.map_on_file(
+                        file=self.file,
+                        relative_start=token.span[0],
+                        generation=getattr(token, 'generation', None),
+                    )
                     results.append(finding)
-                    processed_values[token.val_hash()] = True
+                    processed_values[processed_key] = True
 
             except Exception as e:
                 logger.exception('Unable to process token')
                 continue
 
         return results
+
+    @staticmethod
+    def _processing_key(token: Token) -> object:
+        if token.semantic is None:
+            return token.val_hash()
+
+        return (
+            token.val_hash(),
+            token.semantic.type,
+            token.semantic.name,
+            token.semantic.creds_probability,
+            token.generation,
+        )

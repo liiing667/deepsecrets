@@ -69,12 +69,15 @@ class LexerTokenizer(Tokenizer):
 
 
     def tokenize(self, file: File, post_filter=True) -> List[Token]:
+        generation = self.begin_file(file)
         self.token_stream = ''
+        self.lexer = None  # type: ignore
+        self.language = None  # type: ignore
         # TODO: don't trust the extension, use 'file' utility ?
 
         self.lexer = self._find_lexer_for_file(file)
         if not self.lexer:
-            return self.tokens
+            return []
 
         try:
             self.language: Language = Language.from_text(self.lexer.filenames[0])
@@ -102,7 +105,7 @@ class LexerTokenizer(Tokenizer):
                     continue
 
                 span = file.get_span_for_string(content, between=[start - 1, end + 1])
-                token = Token(file=file, content=content, span=span)
+                token = Token(file=file, content=content, span=span, generation=generation)
                 token.set_type(types)
 
                 improved_tokens = token_improver.improve_token(self.tokens, self.token_stream, token)
@@ -143,7 +146,20 @@ class LexerTokenizer(Tokenizer):
         return final
 
     def deep_analyze(self) -> Set[Token]:
-        tokens_all = OrderedSet(self.tokens)
+        generation = getattr(self, 'generation', None)
+        if generation is None and getattr(self, 'file', None) is not None:
+            generation = self.file.ensure_generation()
+
+        current_tokens = [
+            token
+            for token in self.tokens
+            if getattr(token, 'generation', None) in (None, generation)
+        ]
+        current_stream = self.token_stream
+        if len(current_tokens) != len(self.tokens):
+            current_stream = ''.join(token_to_typestream_item(token) for token in current_tokens)
+
+        tokens_all = OrderedSet(current_tokens)
         if self.language is None:
             return tokens_all
 
@@ -156,14 +172,18 @@ class LexerTokenizer(Tokenizer):
         suppression_rules = VariableSuppressionRules.for_language(self.language)
     
         for rule in detection_rules:
-            true_detections.extend(rule.match(self.tokens, self.token_stream))
+            true_detections.extend(rule.match(current_tokens, current_stream))
         
         for rule in suppression_rules:
-            suppression_regions.extend(rule.match(self.tokens, self.token_stream))
+            suppression_regions.extend(rule.match(current_tokens, current_stream))
 
         suppression_regions = self._collapse_suppression_regions(suppression_regions)
 
         for var in true_detections:
+            var_generation = getattr(var, 'generation', None)
+            if var_generation is not None and generation is not None and var_generation != generation:
+                continue
+
             suppressed = self._if_suppressed(var, suppression_regions)
             if suppressed:
                 exclude_after.update([var.name, var.value])
@@ -173,13 +193,23 @@ class LexerTokenizer(Tokenizer):
                 type=SemanticType.VAR,
                 name=var.name.content,
                 creds_probability=var.found_by.creds_probability,
+                generation=var_generation,
             )
             exclude_after.add(var.name)
 
         return exclude_after
     
     def _if_suppressed(self, var: Variable, regions):
+        var_generation = getattr(var, 'generation', None)
         for reg in regions:
+            reg_generation = getattr(reg, 'generation', None)
+            if (
+                var_generation is not None
+                and reg_generation is not None
+                and var_generation != reg_generation
+            ):
+                continue
+
             if var.span[0] >= reg[0] and var.span[1] <= reg[1]:
                 return True
         return False
@@ -214,8 +244,17 @@ class LexerTokenizer(Tokenizer):
             if i == 0:
                 regions.append(suppression_regions[0])
                 continue
-            
-            if reg[0] == regions[-1][1]:
+
+            previous = regions[-1]
+            previous_generation = getattr(previous, 'generation', None)
+            current_generation = getattr(reg, 'generation', None)
+            same_generation = (
+                previous_generation is None
+                or current_generation is None
+                or previous_generation == current_generation
+            )
+
+            if same_generation and reg[0] == previous[1]:
                 regions[-1][1] = reg[1]
             else:
                 regions.append(reg)

@@ -19,9 +19,24 @@ class Finding(BaseModel):
     end_pos: int
     reason: str = Field(default='')
     final_rule: Optional[Rule] = Field(default=None)
+    generation: Optional[int] = Field(default=None)
     _mapped_on_file: bool = PrivateAttr(default=False)
 
-    def map_on_file(self, relative_start: int, file: Optional['File'] = None) -> None:
+    def __init__(self, **data: Any) -> None:
+        super().__init__(**data)
+        if self.file is not None:
+            ensure_generation = getattr(self.file, 'ensure_generation', None)
+            if callable(ensure_generation):
+                ensure_generation()
+            if self.generation is None:
+                self.generation = getattr(self.file, 'generation', None)
+
+    def map_on_file(
+        self,
+        relative_start: int,
+        file: Optional['File'] = None,
+        generation: Optional[int] = None,
+    ) -> None:
         if self._mapped_on_file:
             return
 
@@ -29,6 +44,17 @@ class Finding(BaseModel):
             raise Exception('No file to match on')
         if self.file is None:
             self.file = file
+
+        ensure_generation = getattr(self.file, 'ensure_generation', None)
+        current_generation = (
+            ensure_generation()
+            if callable(ensure_generation)
+            else getattr(self.file, 'generation', None)
+        )
+        if generation is not None:
+            self.generation = generation
+        elif self.generation is None:
+            self.generation = current_generation
 
         self.start_pos += relative_start
         self.end_pos += relative_start
@@ -59,7 +85,15 @@ class Finding(BaseModel):
         if not self.file:
             raise Exception()
 
-        return hash(f'{self.file.path}{self.detection}{self.start_pos}{self.end_pos}')
+        return hash(
+            (
+                self.file.path,
+                self._finding_generation(),
+                self.detection,
+                self.start_pos,
+                self.end_pos,
+            )
+        )
 
     def __eq__(self, other: Any) -> bool:
         if not isinstance(other, Finding):
@@ -69,19 +103,32 @@ class Finding(BaseModel):
             if other.file.path != self.file.path:
                 return False
 
-        if other.detection and self.detection:
-            if other.detection != self.detection:
-                return False
+        self_generation = self._finding_generation()
+        other_generation = other._finding_generation()
+        if (
+            self_generation is not None
+            and other_generation is not None
+            and self_generation != other_generation
+        ):
+            return False
 
-        if other.start_pos and self.start_pos:
-            if other.start_pos != self.start_pos:
-                return False
+        if other.detection != self.detection:
+            return False
 
-        if other.end_pos and self.end_pos:
-            if other.end_pos != self.end_pos:
-                return False
+        if other.start_pos != self.start_pos:
+            return False
+
+        if other.end_pos != self.end_pos:
+            return False
 
         return True
+
+    def _finding_generation(self) -> Optional[int]:
+        if self.generation is not None:
+            return self.generation
+        if self.file is not None:
+            return getattr(self.file, 'generation', None)
+        return None
 
     def merge(self, other: Any) -> bool:
         if not isinstance(other, Finding):
@@ -91,7 +138,7 @@ class Finding(BaseModel):
             return False
 
         self.rules.extend(other.rules)
-        self.rules = list(set(self.rules))
+        self.rules = list(dict.fromkeys(self.rules))
 
         return True
 

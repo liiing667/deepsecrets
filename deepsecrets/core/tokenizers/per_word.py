@@ -10,6 +10,7 @@ separator = re.compile(r'[ ,"\'\n:={}\[\]\+]+')
 
 class PerWordTokenizer(Tokenizer):
     def tokenize(self, file: File, content: Optional[str] = None) -> List[Token]:
+        generation = self.begin_file(file)
         cnt = content if content is not None else file.content
         length = len(cnt)
         separs = separator.finditer(cnt)
@@ -21,12 +22,22 @@ class PerWordTokenizer(Tokenizer):
                 prev_end = e
                 continue
 
-            token = Token(file=file, content=content[prev_end : e - 1], span=[prev_end, e - 1])
+            token = Token(
+                file=file,
+                content=cnt[prev_end : e - 1],
+                span=[prev_end, e - 1],
+                generation=generation,
+            )
             self.tokens.append(token)
             prev_end = e
 
         if prev_end != length:
-            token = Token(file=file, content=content[prev_end:length], span=[prev_end, length])
+            token = Token(
+                file=file,
+                content=cnt[prev_end:length],
+                span=[prev_end, length],
+                generation=generation,
+            )
             self.tokens.append(token)
 
         return self.tokens

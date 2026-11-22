@@ -7,4 +7,12 @@ from deepsecrets.core.model.token import Token
 
 class FullContentTokenizer(Tokenizer):
     def tokenize(self, file: File) -> List[Token]:
-        return [Token(file=file, content=file.content, span=[0, file.length])]
+        generation = self.begin_file(file)
+        return [
+            Token(
+                file=file,
+                content=file.content,
+                span=[0, file.length],
+                generation=generation,
+            )
+        ]

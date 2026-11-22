@@ -1,5 +1,5 @@
 import regex as re
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 from pydantic import BaseModel, Field, validator
 
@@ -111,6 +111,8 @@ class VaribleDetector(BaseModel):
                 setattr(var, name, tokens[match.span(i)[0]])
             var.found_by = self
             var.span = [match.span(0)[0], match.span(0)[1]]
+            if 0 <= var.span[0] < len(tokens):
+                var.generation = getattr(tokens[var.span[0]], 'generation', None)
 
             true_detections.append(var)
 
@@ -127,13 +129,26 @@ class VaribleDetector(BaseModel):
         return True
 
 
+class SuppressionRegion(list):
+    """A token-index span that belongs to one file generation."""
+
+    def __init__(self, values: Iterable[int] = (), generation: Optional[int] = None) -> None:
+        super().__init__(values)
+        self.generation = generation
+
+
 class VaribleSuppressor(VaribleDetector):
 
     def match(self, tokens: List[Token], token_stream: str) -> List['Variable']:
         detections = super().match(tokens, token_stream)
         spans = []
         for detection in detections:
-            spans.append(detection.span)
+            spans.append(
+                SuppressionRegion(
+                    detection.span,
+                    generation=detection.generation,
+                )
+            )
         
         return spans
     

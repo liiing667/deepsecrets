@@ -1,8 +1,23 @@
-import regex as re
+import os
+from itertools import count
+from threading import Lock
 from typing import Dict, Optional, Tuple
+
+import regex as re
 
 from deepsecrets import logger
 from deepsecrets.core.utils.fs import get_abspath
+
+
+_generation_counter = count(1)
+_generation_lock = Lock()
+
+
+def _next_generation() -> int:
+    with _generation_lock:
+        # Keep generations unique between multiprocessing workers as well as
+        # between successive scans in the same process.
+        return (os.getpid() << 32) + next(_generation_counter)
 
 
 class File:
@@ -15,6 +30,7 @@ class File:
     empty: bool
     name: str
     extension: Optional[str]
+    generation: int
 
     def __init__(
         self,
@@ -50,6 +66,39 @@ class File:
 
         if not self.empty and len(self.line_offsets) == 0:
             self._calc_offsets()
+
+        self._content_signature = self._signature()
+        self.generation = _next_generation()
+
+    def _signature(self) -> Tuple[int, str]:
+        return (len(self.content), self.content)
+
+    def ensure_generation(self) -> int:
+        """
+        Return the generation of the current content.
+
+        A File instance may be reused when parsing is retried or when its
+        content is updated in place. In that case all tokenizer state and all
+        artifacts derived from the previous content have to be invalidated.
+        """
+        signature = self._signature()
+        if signature == self._content_signature:
+            return self.generation
+
+        self._content_signature = signature
+        self.generation = _next_generation()
+        self.length = len(self.content)
+        self.empty = self.length == 0
+        self.line_offsets = {}
+        self.line_contents_cache = {}
+        if not self.empty:
+            self._calc_offsets()
+
+        return self.generation
+
+    def set_content(self, content: str) -> int:
+        self.content = content
+        return self.ensure_generation()
 
     def _get_name(self) -> str:
         by_slash = self.path.split('/')
