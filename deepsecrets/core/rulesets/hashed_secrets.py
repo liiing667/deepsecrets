@@ -42,5 +42,5 @@ class HashedSecretsRulesetBuilder(IRulesetBuilder):
                 )
             )
 
-        self.rules = list(rules_set)
+        self.rules = list(set(self.rules).union(rules_set))
         return self

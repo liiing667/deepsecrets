@@ -23,11 +23,15 @@ from deepsecrets.core.utils.fs import get_abspath
 class ScanMode:
     config: Config
     filepaths: List[str]
-    path_exclusion_rules: List[ExcludePathRule] = []
+    path_exclusion_rules: List[ExcludePathRule]
     file_analyzer: FileAnalyzer
     pool_engine: Type
 
     def __init__(self, config: Config, pool_engine: Optional[Any] = None) -> None:
+        # path exclusion rules belong to a single scan (generation)
+        # and must not leak into other scans
+        self.path_exclusion_rules = []
+
         if pool_engine is None:
             if PLATFORM == 'Darwin':
                 self.pool_engine = get_context('fork').Pool

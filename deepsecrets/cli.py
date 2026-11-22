@@ -7,6 +7,7 @@ from typing import List
 
 from deepsecrets import MODULE_NAME, logger, set_logging_level
 from deepsecrets.config import Config, Output
+from deepsecrets.core.engines.hashed_secret import HashedSecretEngine
 from deepsecrets.core.engines.regex import RegexEngine
 from deepsecrets.core.engines.semantic import SemanticEngine
 from deepsecrets.core.model.finding import Finding, FindingResponse
@@ -157,12 +158,12 @@ class DeepSecretsCliTool:
             self.config.add_ruleset(RegexRulesetBuilder, rules)
 
         conf_semantic_analysis = user_args.semantic_analysis
-        if conf_semantic_analysis is not None and conf_semantic_analysis != DISABLED:
+        if conf_semantic_analysis is not None and DISABLED not in conf_semantic_analysis:
             self.config.engines.append(SemanticEngine)
 
         conf_hashed_ruleset = user_args.hashed_values
-        if conf_hashed_ruleset is not None and conf_hashed_ruleset != DISABLED:
-            self.config.engines.append(RegexEngine)
+        if conf_hashed_ruleset is not None and DISABLED not in conf_hashed_ruleset:
+            self.config.engines.append(HashedSecretEngine)
             self.config.add_ruleset(HashedSecretsRulesetBuilder, conf_hashed_ruleset)
 
         conf_false_findings_ruleset = user_args.false_findings

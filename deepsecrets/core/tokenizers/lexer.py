@@ -69,6 +69,7 @@ class LexerTokenizer(Tokenizer):
 
 
     def tokenize(self, file: File, post_filter=True) -> List[Token]:
+        self.tokens = []
         self.token_stream = ''
         # TODO: don't trust the extension, use 'file' utility ?
 

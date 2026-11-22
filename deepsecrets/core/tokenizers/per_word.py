@@ -10,6 +10,7 @@ separator = re.compile(r'[ ,"\'\n:={}\[\]\+]+')
 
 class PerWordTokenizer(Tokenizer):
     def tokenize(self, file: File, content: Optional[str] = None) -> List[Token]:
+        self.tokens = []
         cnt = content if content is not None else file.content
         length = len(cnt)
         separs = separator.finditer(cnt)

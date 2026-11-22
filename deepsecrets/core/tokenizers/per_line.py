@@ -10,6 +10,7 @@ separator = re.compile(r'\n')
 
 class PerLineTokenizer(Tokenizer):
     def tokenize(self, file: File) -> List[Token]:
+        self.tokens = []
         separs = separator.finditer(file.content)
         prev_end = 0
         for sep in separs:
