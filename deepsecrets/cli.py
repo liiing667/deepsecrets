@@ -181,9 +181,19 @@ class DeepSecretsCliTool:
             logger.info(f'[!] The tool will return code of {FINDINGS_DETECTED_RETURN_CODE} if any findings are detected\n')
 
         logger.info(80 * '=')
-        findings: List[Finding] = CliScanMode(config=self.config).run()
+        scan_mode = CliScanMode(config=self.config)
+        findings: List[Finding] = scan_mode.run()
         logger.info(80 * '=')
         logger.info('Scanning finished')
+
+        session = scan_mode.scan_session
+        if session is not None:
+            logger.info(f'Scan generation: {session.generation_id} (state: {session.state_path})')
+            if session.failed_files:
+                logger.warning(f'{len(session.failed_files)} file(s) failed during the scan:')
+                for failed_path in session.failed_files:
+                    logger.warning(f' ✗ [{failed_path}]')
+
         logger.info(f'{len(findings)} potential secrets found')
         report_path = get_abspath(self.config.output.path)
 

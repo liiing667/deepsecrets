@@ -56,3 +56,7 @@ playground/
 .mypy*
 *.db
 pytest*
+
+# resumable scan state
+*.dsresume
+*.dsresume.tmp

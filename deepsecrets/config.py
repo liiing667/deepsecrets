@@ -1,4 +1,4 @@
-from typing import Dict, List, Type
+from typing import Dict, List, Optional, Type
 
 from pydantic import BaseModel
 from deepsecrets.core.utils.cpu import CpuHelper
@@ -21,12 +21,18 @@ class Config:
     output: Output
     process_count: int
     return_code_if_findings: bool
+    resume_enabled: bool
+    resume_state_path: Optional[str]
 
     def __init__(self) -> None:
         self.engines = []
         self.rulesets = {}
         self.global_exclusion_paths = []
         self.return_code_if_findings = False
+        # resumable scan generations are on by default; the state file
+        # is stored next to the report unless resume_state_path is set
+        self.resume_enabled = True
+        self.resume_state_path = None
         # equals to CPU count
         self.process_count = FALLBACK_PROCESS_COUNT
 

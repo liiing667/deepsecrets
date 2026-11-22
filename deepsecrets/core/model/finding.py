@@ -151,3 +151,66 @@ class FindingApiModel(BaseModel):
             confidence=finding.final_rule.confidence,
             fingerprint=finding.get_fingerprint(),
         )
+
+
+def rule_to_snapshot(rule: Rule) -> Dict[str, Any]:
+    """Reduce a rule to the JSON-safe fields needed after a scan."""
+    return {
+        'id': rule.id,
+        'name': rule.name,
+        'confidence': rule.confidence,
+    }
+
+
+def _rule_from_snapshot(payload: Dict[str, Any]) -> Rule:
+    return Rule(
+        id=payload.get('id') or '',
+        name=payload.get('name'),
+        confidence=payload.get('confidence', 9),
+    )
+
+
+def finding_to_snapshot(finding: Finding) -> Dict[str, Any]:
+    """Serialize a finding so it can persist inside a scan generation.
+
+    Only the fields consumed by report building are stored; the detection
+    string is kept verbatim, so the finding fingerprint stays identical
+    when the finding is restored in a later run.
+    """
+    final_rule = finding.final_rule
+    if final_rule is None and len(finding.rules) > 0:
+        finding.choose_final_rule()
+        final_rule = finding.final_rule
+
+    return {
+        'detection': finding.detection,
+        'start_pos': finding.start_pos,
+        'end_pos': finding.end_pos,
+        'linum': finding.linum,
+        'full_line': finding.full_line,
+        'reason': finding.reason,
+        'rules': [rule_to_snapshot(rule) for rule in finding.rules],
+        'final_rule': rule_to_snapshot(final_rule) if final_rule is not None else None,
+    }
+
+
+def finding_from_snapshot(path: str, relative_path: str, payload: Dict[str, Any]) -> Finding:
+    """Restore a finding persisted by :func:`finding_to_snapshot`.
+
+    The file content is not re-read: positions, line number and the full
+    line were pinned when the finding was first mapped on its file.
+    """
+    final_rule_payload = payload.get('final_rule')
+    finding = Finding(
+        file=File(path=path, relative_path=relative_path, content=''),
+        rules=[_rule_from_snapshot(rule) for rule in payload.get('rules', [])],
+        detection=payload.get('detection', ''),
+        full_line=payload.get('full_line'),
+        linum=payload.get('linum'),
+        start_pos=payload.get('start_pos', 0),
+        end_pos=payload.get('end_pos', 0),
+        reason=payload.get('reason', ''),
+        final_rule=_rule_from_snapshot(final_rule_payload) if final_rule_payload else None,
+    )
+    finding._mapped_on_file = True
+    return finding
